@@ -393,6 +393,16 @@ static const struct lm_ggml_type_traits_cpu type_traits_cpu[LM_GGML_TYPE_COUNT] 
     [LM_GGML_TYPE_I32] = {
         .from_float               = (lm_ggml_from_float_t) lm_ggml_cpu_fp32_to_i32,
     },
+    [LM_GGML_TYPE_TURBO3_0] = {
+        .from_float               = quantize_row_turbo3_0,
+        .vec_dot                  = lm_ggml_vec_dot_turbo3_0_q8_0,
+        .vec_dot_type             = LM_GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [LM_GGML_TYPE_TURBO4_0] = {
+        .from_float               = quantize_row_turbo4_0,
+        .nrows                    = 1,
+    },
 };
 
 const struct lm_ggml_type_traits_cpu * lm_ggml_get_type_traits_cpu(enum lm_ggml_type type) {

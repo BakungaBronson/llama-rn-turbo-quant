@@ -173,15 +173,28 @@ static int nearest_centroid_3bit(float val) {
 /* ---------- TURBO3_0: 2-bit PolarQuant + 1-bit QJL ---------- */
 
 void quantize_row_turbo3_0_ref(const float * LM_GGML_RESTRICT x, block_turbo3_0 * LM_GGML_RESTRICT y, int64_t k) {
-    // Stub — Metal shader handles quantize on GPU. CPU path is simplified.
     assert(k % QK_TURBO3 == 0);
     const int nb = k / QK_TURBO3;
-    for (int i = 0; i < nb; i++) {
-        float norm = 0.0f;
-        for (int j = 0; j < QK_TURBO3; j++) norm += x[i*QK_TURBO3 + j] * x[i*QK_TURBO3 + j];
-        y[i].norm = LM_GGML_FP32_TO_FP16(sqrtf(norm));
-        memset(y[i].qs, 0, QK_TURBO3 / 4);
-        memset(y[i].signs, 0, QK_TURBO3 / 8);
+
+    for (int block = 0; block < nb; block++) {
+        const float * src = x + block * QK_TURBO3;
+
+        float norm_sq = 0.0f;
+        for (int j = 0; j < QK_TURBO3; j++) norm_sq += src[j] * src[j];
+        float norm = sqrtf(norm_sq);
+        y[block].norm = LM_GGML_FP32_TO_FP16(norm);
+
+        const float inv_norm = (norm > 1e-10f) ? 1.0f / norm : 0.0f;
+
+        memset(y[block].qs, 0, QK_TURBO3 / 4);
+        memset(y[block].signs, 0, QK_TURBO3 / 8);
+
+        for (int j = 0; j < QK_TURBO3; j++) {
+            float val = src[j] * inv_norm;
+            uint8_t idx = (uint8_t)nearest_centroid_3bit(val);
+            y[block].qs[j / 4]    |= (uint8_t)((idx & 0x3) << ((j % 4) * 2));
+            y[block].signs[j / 8] |= (uint8_t)(((idx >> 2) & 0x1) << (j % 8));
+        }
     }
 }
 
@@ -368,4 +381,54 @@ size_t quantize_turbo4_0(const float * LM_GGML_RESTRICT src, void * LM_GGML_REST
         );
     }
     return nrows * row_size;
+}
+
+/* ---------- CPU wrappers (void * for lm_ggml_from_float_t) ---------- */
+
+void quantize_row_turbo3_0(const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k) {
+    quantize_row_turbo3_0_ref(x, (block_turbo3_0 *)y, k);
+}
+
+void quantize_row_turbo4_0(const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k) {
+    quantize_row_turbo4_0_ref(x, (block_turbo4_0 *)y, k);
+}
+
+/* ---------- vec_dot: turbo3 · q8_0 (flash attention CPU path) ---------- */
+
+void lm_ggml_vec_dot_turbo3_0_q8_0(int n, float * LM_GGML_RESTRICT s, size_t bs,
+        const void * LM_GGML_RESTRICT vx, size_t bx,
+        const void * LM_GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(n % QK_TURBO3 == 0);
+    assert(nrc == 1);
+    LM_GGML_UNUSED(nrc);
+    LM_GGML_UNUSED(bx);
+    LM_GGML_UNUSED(by);
+    LM_GGML_UNUSED(bs);
+
+    const block_turbo3_0 * LM_GGML_RESTRICT x = (const block_turbo3_0 *)vx;
+    const block_q8_0     * LM_GGML_RESTRICT y = (const block_q8_0 *)vy;
+
+    const int nb = n / QK_TURBO3;
+    float sumf = 0.0f;
+
+    for (int i = 0; i < nb; i++) {
+        float turbo_norm = LM_GGML_FP16_TO_FP32(x[i].norm);
+        float q8_scale   = LM_GGML_FP16_TO_FP32(y[i].d);
+
+        float block_sum = 0.0f;
+        for (int j = 0; j < QK_TURBO3; j++) {
+            uint8_t low2 = (x[i].qs[j / 4] >> ((j % 4) * 2)) & 0x3;
+            uint8_t hi1  = (x[i].signs[j / 8] >> (j % 8)) & 0x1;
+            uint8_t idx  = low2 | (hi1 << 2);
+
+            float centroid = CENTROIDS_3BIT[idx];
+            int8_t q8_val  = y[i].qs[j];
+
+            block_sum += centroid * (float)q8_val;
+        }
+
+        sumf += turbo_norm * q8_scale * block_sum;
+    }
+
+    *s = sumf;
 }

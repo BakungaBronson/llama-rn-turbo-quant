@@ -32,6 +32,11 @@ void quantize_row_q8_K(const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT
 void quantize_row_tq1_0(const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k);
 void quantize_row_tq2_0(const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k);
 
+// TurboQuant
+void quantize_row_turbo3_0(const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k);
+void quantize_row_turbo4_0(const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k);
+void lm_ggml_vec_dot_turbo3_0_q8_0(int n, float * LM_GGML_RESTRICT s, size_t bs, const void * LM_GGML_RESTRICT vx, size_t bx, const void * LM_GGML_RESTRICT vy, size_t by, int nrc);
+
 void quantize_row_iq4_nl (const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k);
 void quantize_row_iq4_xs (const float * LM_GGML_RESTRICT x, void * LM_GGML_RESTRICT y, int64_t k);
 
