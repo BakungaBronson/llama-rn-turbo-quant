@@ -1191,9 +1191,11 @@ static const char * LM_GGML_OP_SYMBOL[LM_GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+
+    "turbo_wht(x)",
 };
 
-static_assert(LM_GGML_OP_COUNT == 96, "LM_GGML_OP_COUNT != 96");
+static_assert(LM_GGML_OP_COUNT == 97, "LM_GGML_OP_COUNT != 97");
 
 static_assert(LM_GGML_OP_POOL_COUNT == 2, "LM_GGML_OP_POOL_COUNT != 2");
 
