@@ -2003,6 +2003,10 @@ static void lm_ggml_compute_forward(struct lm_ggml_compute_params * params, stru
             {
                 lm_ggml_compute_forward_glu(params, tensor);
             } break;
+        case LM_GGML_OP_TURBO_WHT:
+            {
+                lm_ggml_compute_forward_turbo_wht(params, tensor);
+            } break;
         case LM_GGML_OP_GET_REL_POS:
             {
                 lm_ggml_compute_forward_get_rel_pos(params, tensor);
@@ -2270,6 +2274,10 @@ static int lm_ggml_get_n_tasks(struct lm_ggml_tensor * node, int n_threads) {
                     LM_GGML_ABORT("fatal error");
             }
             break;
+        case LM_GGML_OP_TURBO_WHT:
+            {
+                n_tasks = n_threads;
+            } break;
         case LM_GGML_OP_SILU_BACK:
         case LM_GGML_OP_MUL:
         case LM_GGML_OP_DIV:

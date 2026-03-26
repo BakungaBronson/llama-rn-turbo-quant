@@ -248,6 +248,31 @@ typedef struct {
 static_assert(sizeof(block_q8_1) == 2*sizeof(lm_ggml_half) + QK8_1, "wrong q8_1 block size/padding");
 
 //
+// TurboQuant KV cache compression (arXiv 2504.19874)
+//
+
+// TurboQuant 3-bit: 2-bit PolarQuant indices + 1-bit sign (combined = 3-bit centroid index)
+// Block size 32 for GPU parallelism; rotation handled at graph level
+#define QK_TURBO3 32
+#define QK_TURBO3_GROUP 128  // rotation group size = head_dim
+typedef struct {
+    lm_ggml_half norm;                    //  2 bytes: vector L2 norm
+    uint8_t    qs[QK_TURBO3 / 4];       //  8 bytes: lower 2-bit indices (4 per byte)
+    uint8_t    signs[QK_TURBO3 / 8];    //  4 bytes: upper 1-bit of 3-bit index (8 per byte)
+} block_turbo3_0;                        // 14 bytes total
+static_assert(sizeof(block_turbo3_0) == sizeof(lm_ggml_half) + QK_TURBO3/4 + QK_TURBO3/8, "wrong turbo3_0 block size/padding");
+
+// TurboQuant 4-bit: 3-bit PolarQuant indices + 1-bit QJL signs
+#define QK_TURBO4 128
+typedef struct {
+    lm_ggml_half norm;                    //  2 bytes
+    lm_ggml_half rnorm;                   //  2 bytes: residual norm for QJL
+    uint8_t    qs[QK_TURBO4 * 3 / 8];   // 48 bytes: 3-bit PolarQuant indices
+    uint8_t    signs[QK_TURBO4 / 8];    // 16 bytes: 1-bit QJL signs
+} block_turbo4_0;                        // 68 bytes total
+static_assert(sizeof(block_turbo4_0) == 2*sizeof(lm_ggml_half) + QK_TURBO4*3/8 + QK_TURBO4/8, "wrong turbo4_0 block size/padding");
+
+//
 // Ternary quantization
 //
 

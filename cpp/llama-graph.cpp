@@ -2058,8 +2058,25 @@ lm_ggml_tensor * llm_graph_context::build_attn(
     lm_ggml_tensor * k = mctx_cur->get_k(ctx0, il);
     lm_ggml_tensor * v = mctx_cur->get_v(ctx0, il);
 
+    // TurboQuant: pre-rotate Q with forward WHT (O(d log d))
+    // The KV cache stores rotated vectors; Q must be rotated to match
+    if (k->type == LM_GGML_TYPE_TURBO3_0 || k->type == LM_GGML_TYPE_TURBO4_0) {
+        if (q->ne[0] % 128 == 0) {
+            if (!lm_ggml_is_contiguous(q)) { q = lm_ggml_cont(ctx0, q); }
+            q = lm_ggml_turbo_wht(ctx0, q, 0);  // 0 = forward
+        }
+    }
+
     lm_ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
     cb(cur, "kqv_out", il);
+
+    // TurboQuant: inverse WHT on attention output to undo V rotation
+    if (v->type == LM_GGML_TYPE_TURBO3_0 || v->type == LM_GGML_TYPE_TURBO4_0) {
+        if (cur->ne[0] % 128 == 0) {
+            if (!lm_ggml_is_contiguous(cur)) { cur = lm_ggml_cont(ctx0, cur); }
+            cur = lm_ggml_turbo_wht(ctx0, cur, 1);  // 1 = inverse
+        }
+    }
 
     if (wo) {
         cur = build_lora_mm(wo, cur);

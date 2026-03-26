@@ -69,6 +69,7 @@ add_library(rnllama SHARED
     ${SOURCE_DIR}/ggml-opt.cpp
     ${SOURCE_DIR}/ggml-threading.cpp
     ${SOURCE_DIR}/ggml-quants.c
+    ${SOURCE_DIR}/ggml-turbo-quant.c
     ${SOURCE_DIR}/gguf.cpp
 
     # GGML CPU files (globbed)

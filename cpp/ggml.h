@@ -428,7 +428,9 @@ extern "C" {
         // LM_GGML_TYPE_IQ4_NL_8_8 = 38,
         LM_GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
         LM_GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
-        LM_GGML_TYPE_COUNT   = 41,
+        LM_GGML_TYPE_TURBO3_0 = 41, // TurboQuant 3-bit KV cache (arXiv 2504.19874)
+        LM_GGML_TYPE_TURBO4_0 = 42, // TurboQuant 4-bit KV cache
+        LM_GGML_TYPE_COUNT   = 43,
     };
 
     // precision
@@ -574,6 +576,8 @@ extern "C" {
         LM_GGML_OP_OPT_STEP_SGD,
 
         LM_GGML_OP_GLU,
+
+        LM_GGML_OP_TURBO_WHT, // TurboQuant Walsh-Hadamard Transform for KV cache rotation
 
         LM_GGML_OP_COUNT,
     };
@@ -2592,6 +2596,13 @@ extern "C" {
         struct lm_ggml_tensor *  a,
         struct lm_ggml_tensor *  grad,
         struct lm_ggml_tensor *  sgd_params); // alpha, weight decay
+
+    // TurboQuant Walsh-Hadamard Transform (O(d log d) rotation for KV cache compression)
+    // direction: 0 = forward (for Q pre-rotation), 1 = inverse (for V output un-rotation)
+    LM_GGML_API struct lm_ggml_tensor * lm_ggml_turbo_wht(
+            struct lm_ggml_context * ctx,
+            struct lm_ggml_tensor  * a,
+            int                   direction);
 
     // build forward multiple tensors and select one of them for computing
     // this is useful for creating graphs that have constant topology but compute different things based on the input

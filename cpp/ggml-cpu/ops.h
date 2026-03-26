@@ -112,6 +112,7 @@ void lm_ggml_compute_forward_cross_entropy_loss_back(const struct lm_ggml_comput
 void lm_ggml_compute_forward_opt_step_adamw(const struct lm_ggml_compute_params * params, struct lm_ggml_tensor * dst);
 void lm_ggml_compute_forward_mul_mat(const struct lm_ggml_compute_params * params, struct lm_ggml_tensor * dst);
 void lm_ggml_compute_forward_opt_step_sgd(const struct lm_ggml_compute_params * params, struct lm_ggml_tensor * dst);
+void lm_ggml_compute_forward_turbo_wht(const struct lm_ggml_compute_params * params, struct lm_ggml_tensor * dst);
 #ifdef __cplusplus
 }
 #endif

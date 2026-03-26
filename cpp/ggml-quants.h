@@ -24,6 +24,10 @@ LM_GGML_API void quantize_row_q8_1_ref(const float * LM_GGML_RESTRICT x, block_q
 LM_GGML_API void quantize_row_mxfp4_ref(const float * LM_GGML_RESTRICT x, block_mxfp4 * LM_GGML_RESTRICT y, int64_t k);
 LM_GGML_API void quantize_row_nvfp4_ref(const float * LM_GGML_RESTRICT x, block_nvfp4 * LM_GGML_RESTRICT y, int64_t k);
 
+// TurboQuant KV cache compression (arXiv 2504.19874)
+LM_GGML_API void quantize_row_turbo3_0_ref(const float * LM_GGML_RESTRICT x, block_turbo3_0 * LM_GGML_RESTRICT y, int64_t k);
+LM_GGML_API void quantize_row_turbo4_0_ref(const float * LM_GGML_RESTRICT x, block_turbo4_0 * LM_GGML_RESTRICT y, int64_t k);
+
 LM_GGML_API void quantize_row_q2_K_ref(const float * LM_GGML_RESTRICT x, block_q2_K * LM_GGML_RESTRICT y, int64_t k);
 LM_GGML_API void quantize_row_q3_K_ref(const float * LM_GGML_RESTRICT x, block_q3_K * LM_GGML_RESTRICT y, int64_t k);
 LM_GGML_API void quantize_row_q4_K_ref(const float * LM_GGML_RESTRICT x, block_q4_K * LM_GGML_RESTRICT y, int64_t k);
@@ -50,6 +54,10 @@ LM_GGML_API void dequantize_row_q8_0(const block_q8_0 * LM_GGML_RESTRICT x, floa
 
 LM_GGML_API void dequantize_row_mxfp4(const block_mxfp4 * LM_GGML_RESTRICT x, float * LM_GGML_RESTRICT y, int64_t k);
 LM_GGML_API void dequantize_row_nvfp4(const block_nvfp4 * LM_GGML_RESTRICT x, float * LM_GGML_RESTRICT y, int64_t k);
+
+// TurboQuant
+LM_GGML_API void dequantize_row_turbo3_0(const block_turbo3_0 * LM_GGML_RESTRICT x, float * LM_GGML_RESTRICT y, int64_t k);
+LM_GGML_API void dequantize_row_turbo4_0(const block_turbo4_0 * LM_GGML_RESTRICT x, float * LM_GGML_RESTRICT y, int64_t k);
 
 LM_GGML_API void dequantize_row_q2_K(const block_q2_K * LM_GGML_RESTRICT x, float * LM_GGML_RESTRICT y, int64_t k);
 LM_GGML_API void dequantize_row_q3_K(const block_q3_K * LM_GGML_RESTRICT x, float * LM_GGML_RESTRICT y, int64_t k);

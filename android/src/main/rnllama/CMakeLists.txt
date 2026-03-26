@@ -41,6 +41,7 @@ set(
     ${RNLLAMA_LIB_DIR}/ggml-opt.cpp
     ${RNLLAMA_LIB_DIR}/ggml-threading.cpp
     ${RNLLAMA_LIB_DIR}/ggml-quants.c
+    ${RNLLAMA_LIB_DIR}/ggml-turbo-quant.c
     ${RNLLAMA_LIB_DIR}/gguf.cpp
 
     # GGML CPU files (globbed)

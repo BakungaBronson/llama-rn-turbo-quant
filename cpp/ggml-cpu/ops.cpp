@@ -11186,3 +11186,69 @@ void lm_ggml_compute_forward_opt_step_sgd(const lm_ggml_compute_params * params,
             }
     }
 }
+
+// lm_ggml_compute_forward_turbo_wht
+
+// Pre-computed sign arrays for WHT rotation (from TurboQuant paper, seed=42)
+static const float turbo_wht_s1[128] = {-1,1,1,-1,-1,1,-1,1,-1,-1,1,1,1,1,1,1,1,-1,1,-1,1,-1,-1,1,1,1,-1,1,1,-1,-1,-1,-1,1,1,-1,1,1,-1,1,-1,1,1,-1,-1,1,-1,1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,1,1,-1,1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,1,-1,-1,1,1,1,-1,-1,1,1,-1,1,1,-1,1,-1,-1,1,1,-1,1,-1,1,-1,1,1,1,1,-1,1,-1,1,1,-1,1,1,-1,-1,-1,-1,-1,1,1,-1,1,1,-1,1};
+static const float turbo_wht_s2[128] = {1,1,1,1,-1,1,1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,-1,-1,1,-1,1,-1,1,-1,-1,1,-1,1,1,1,1,1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,1,1,1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,-1,-1,-1,1,-1,1,-1,1,-1,-1,1,1,-1,1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,-1,1,-1,1,-1,1,1,1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,1,-1,1,1,-1,1,-1,1,-1,-1,-1,-1,-1,1,-1};
+
+static void lm_ggml_compute_forward_turbo_wht_f32(
+        const lm_ggml_compute_params * params,
+        lm_ggml_tensor * dst) {
+    const lm_ggml_tensor * src = dst->src[0];
+    const float * src_data = (const float *) src->data;
+    float * dst_data = (float *) dst->data;
+
+    int direction;
+    memcpy(&direction, dst->op_params, sizeof(int));
+
+    const float * s_first  = (direction == 0) ? turbo_wht_s1 : turbo_wht_s2;
+    const float * s_second = (direction == 0) ? turbo_wht_s2 : turbo_wht_s1;
+
+    const int64_t n_total = lm_ggml_nelements(src);
+    const int64_t n_groups = n_total / 128;
+
+    const int64_t ith = params->ith;
+    const int64_t nth = params->nth;
+    const int64_t grp_start = (n_groups * ith) / nth;
+    const int64_t grp_end   = (n_groups * (ith + 1)) / nth;
+
+    for (int64_t g = grp_start; g < grp_end; g++) {
+        float x[128];
+        const float * in = src_data + g * 128;
+
+        // Apply first signs
+        for (int i = 0; i < 128; i++) x[i] = in[i] * s_first[i];
+
+        // WHT butterfly (7 stages, O(d log d))
+        for (int h = 1; h < 128; h *= 2) {
+            for (int i = 0; i < 128; i += h * 2) {
+                for (int j = i; j < i + h; j++) {
+                    float a = x[j], b = x[j + h];
+                    x[j]     = a + b;
+                    x[j + h] = a - b;
+                }
+            }
+        }
+
+        // Normalize + second signs
+        const float inv_sqrt_128 = 0.08838834764831845f;
+        float * out = dst_data + g * 128;
+        for (int i = 0; i < 128; i++) {
+            out[i] = x[i] * inv_sqrt_128 * s_second[i];
+        }
+    }
+}
+
+void lm_ggml_compute_forward_turbo_wht(
+        const lm_ggml_compute_params * params,
+        lm_ggml_tensor * dst) {
+    switch (dst->src[0]->type) {
+        case LM_GGML_TYPE_F32:
+            lm_ggml_compute_forward_turbo_wht_f32(params, dst);
+            break;
+        default:
+            LM_GGML_ABORT("fatal error - turbo_wht is F32 only");
+    }
+}

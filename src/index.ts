@@ -199,6 +199,8 @@ export type ContextParams = Omit<
     | 'iq4_nl'
     | 'q5_0'
     | 'q5_1'
+    | 'turbo3'
+    | 'turbo4'
   cache_type_v?:
     | 'f16'
     | 'f32'
@@ -208,6 +210,8 @@ export type ContextParams = Omit<
     | 'iq4_nl'
     | 'q5_0'
     | 'q5_1'
+    | 'turbo3'
+    | 'turbo4'
   pooling_type?: 'none' | 'mean' | 'cls' | 'last' | 'rank'
 }
 
@@ -221,6 +225,8 @@ const validCacheTypes = [
   'iq4_nl',
   'q5_0',
   'q5_1',
+  'turbo3',
+  'turbo4',
 ]
 
 export type EmbeddingParams = NativeEmbeddingParams

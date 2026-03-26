@@ -912,6 +912,22 @@ static const struct lm_ggml_type_traits type_traits[LM_GGML_TYPE_COUNT] = {
         .type_size                = 0,
         .is_quantized             = false,
     },
+    [LM_GGML_TYPE_TURBO3_0] = {
+        .type_name                = "turbo3",
+        .blck_size                = QK_TURBO3,
+        .type_size                = sizeof(block_turbo3_0),
+        .is_quantized             = true,
+        .to_float                 = (lm_ggml_to_float_t) dequantize_row_turbo3_0,
+        .from_float_ref           = (lm_ggml_from_float_t) quantize_row_turbo3_0_ref,
+    },
+    [LM_GGML_TYPE_TURBO4_0] = {
+        .type_name                = "turbo4",
+        .blck_size                = QK_TURBO4,
+        .type_size                = sizeof(block_turbo4_0),
+        .is_quantized             = true,
+        .to_float                 = (lm_ggml_to_float_t) dequantize_row_turbo4_0,
+        .from_float_ref           = (lm_ggml_from_float_t) quantize_row_turbo4_0_ref,
+    },
 };
 
 const struct lm_ggml_type_traits * lm_ggml_get_type_traits(enum lm_ggml_type type) {
@@ -1063,9 +1079,11 @@ static const char * LM_GGML_OP_NAME[LM_GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+
+    "TURBO_WHT",
 };
 
-static_assert(LM_GGML_OP_COUNT == 96, "LM_GGML_OP_COUNT != 96");
+static_assert(LM_GGML_OP_COUNT == 97, "LM_GGML_OP_COUNT != 97");
 
 static const char * LM_GGML_OP_SYMBOL[LM_GGML_OP_COUNT] = {
     "none",
@@ -6196,6 +6214,27 @@ struct lm_ggml_tensor * lm_ggml_gated_delta_net(
     result->src[3] = g;
     result->src[4] = beta;
     result->src[5] = state;
+
+    return result;
+}
+
+// lm_ggml_turbo_wht
+
+struct lm_ggml_tensor * lm_ggml_turbo_wht(
+        struct lm_ggml_context * ctx,
+        struct lm_ggml_tensor  * a,
+        int                   direction) {
+    LM_GGML_ASSERT(lm_ggml_is_contiguous(a));
+    LM_GGML_ASSERT(a->type == LM_GGML_TYPE_F32);
+    LM_GGML_ASSERT(a->ne[0] % 128 == 0);
+    LM_GGML_ASSERT(direction == 0 || direction == 1);
+
+    struct lm_ggml_tensor * result = lm_ggml_new_tensor(ctx, LM_GGML_TYPE_F32, 4, a->ne);
+
+    result->op = LM_GGML_OP_TURBO_WHT;
+    result->src[0] = a;
+
+    memcpy(result->op_params, &direction, sizeof(int));
 
     return result;
 }
