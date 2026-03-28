@@ -2043,6 +2043,25 @@ lm_ggml_tensor * llm_graph_context::build_attn(
 
     const auto * mctx_cur = inp->mctx;
 
+    // TurboQuant: rotate K and V BEFORE writing to cache
+    // The cache stores rotated values; Q is rotated to match at attention time
+    if (k_cur->type == LM_GGML_TYPE_F32 || k_cur->type == LM_GGML_TYPE_F16) {
+        // Check if the KV cache target type is turbo — if so, rotate before writing
+        const auto * mctx_check = inp->mctx;
+        lm_ggml_tensor * k_check = mctx_check->get_k(ctx0, il);
+        lm_ggml_tensor * v_check = mctx_check->get_v(ctx0, il);
+        if (k_check->type == LM_GGML_TYPE_TURBO3_0 || k_check->type == LM_GGML_TYPE_TURBO4_0) {
+            if (k_cur->ne[0] % 128 == 0) {
+                if (!lm_ggml_is_contiguous(k_cur)) { k_cur = lm_ggml_cont(ctx0, k_cur); }
+                k_cur = lm_ggml_turbo_wht(ctx0, k_cur, 0);  // forward rotate K
+            }
+            if (v_cur->ne[0] % 128 == 0) {
+                if (!lm_ggml_is_contiguous(v_cur)) { v_cur = lm_ggml_cont(ctx0, v_cur); }
+                v_cur = lm_ggml_turbo_wht(ctx0, v_cur, 0);  // forward rotate V
+            }
+        }
+    }
+
     // store to KV cache
     {
         const auto & k_idxs = inp->get_k_idxs();
@@ -2058,8 +2077,7 @@ lm_ggml_tensor * llm_graph_context::build_attn(
     lm_ggml_tensor * k = mctx_cur->get_k(ctx0, il);
     lm_ggml_tensor * v = mctx_cur->get_v(ctx0, il);
 
-    // TurboQuant: pre-rotate Q with forward WHT (O(d log d))
-    // The KV cache stores rotated vectors; Q must be rotated to match
+    // TurboQuant: forward-rotate Q to match rotated K/V in cache
     if (k->type == LM_GGML_TYPE_TURBO3_0 || k->type == LM_GGML_TYPE_TURBO4_0) {
         if (q->ne[0] % 128 == 0) {
             if (!lm_ggml_is_contiguous(q)) { q = lm_ggml_cont(ctx0, q); }
@@ -2070,7 +2088,7 @@ lm_ggml_tensor * llm_graph_context::build_attn(
     lm_ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
     cb(cur, "kqv_out", il);
 
-    // TurboQuant: inverse WHT on attention output to undo V rotation
+    // TurboQuant: inverse-rotate attention output to undo V cache rotation
     if (v->type == LM_GGML_TYPE_TURBO3_0 || v->type == LM_GGML_TYPE_TURBO4_0) {
         if (cur->ne[0] % 128 == 0) {
             if (!lm_ggml_is_contiguous(cur)) { cur = lm_ggml_cont(ctx0, cur); }
