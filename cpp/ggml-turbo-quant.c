@@ -31,13 +31,14 @@ static const float CENTROIDS_3BIT[8] = {
      0.021460f,  0.065717f,  0.117832f,  0.190685f
 };
 
-/* 4-bit: Lloyd-Max for N(0, 1/128), 16 centroids, pre-computed */
+/* 4-bit: Lloyd-Max optimal centroids for N(0, 1/d) with d=128.
+ * Standard normal 16-level Lloyd-Max centroids scaled by 1/sqrt(d).
+ * Symmetric: centroid[i] = -centroid[15-i]. Sorted ascending (index 0 = most negative). */
 static const float CENTROIDS_4BIT[16] = {
-    -0.228227f, -0.170944f, -0.127448f, -0.089818f,
-    -0.055307f, -0.022460f,  0.009260f,  0.040890f,
-     0.040890f,  0.009260f, -0.022460f, -0.055307f,
-    /* symmetric: negate and reverse */
-     0.089818f,  0.127448f,  0.170944f,  0.228227f
+    -0.212282f, -0.163023f, -0.127050f, -0.097152f,
+    -0.070547f, -0.046176f, -0.022826f, -0.007620f,
+     0.007620f,  0.022826f,  0.046176f,  0.070547f,
+     0.097152f,  0.127050f,  0.163023f,  0.212282f
 };
 
 /* Threshold for sparse V dequantization: skip V blocks where attention weight < this.
