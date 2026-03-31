@@ -2050,11 +2050,15 @@ lm_ggml_tensor * llm_graph_context::build_attn(
         const auto * mctx_check = inp->mctx;
         lm_ggml_tensor * k_check = mctx_check->get_k(ctx0, il);
         lm_ggml_tensor * v_check = mctx_check->get_v(ctx0, il);
+        // Rotate K if K cache is TurboQuant
         if (k_check->type == LM_GGML_TYPE_TURBO3_0 || k_check->type == LM_GGML_TYPE_TURBO4_0) {
             if (k_cur->ne[0] % 128 == 0) {
                 if (!lm_ggml_is_contiguous(k_cur)) { k_cur = lm_ggml_cont(ctx0, k_cur); }
                 k_cur = lm_ggml_turbo_wht(ctx0, k_cur, 0);  // forward rotate K
             }
+        }
+        // Rotate V only if V cache is TurboQuant (not for boundary layers using q8_0)
+        if (v_check->type == LM_GGML_TYPE_TURBO3_0 || v_check->type == LM_GGML_TYPE_TURBO4_0) {
             if (v_cur->ne[0] % 128 == 0) {
                 if (!lm_ggml_is_contiguous(v_cur)) { v_cur = lm_ggml_cont(ctx0, v_cur); }
                 v_cur = lm_ggml_turbo_wht(ctx0, v_cur, 0);  // forward rotate V
