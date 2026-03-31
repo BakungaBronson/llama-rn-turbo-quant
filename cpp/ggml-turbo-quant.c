@@ -395,6 +395,145 @@ void quantize_row_turbo4_0(const float * LM_GGML_RESTRICT x, void * LM_GGML_REST
 
 /* ---------- vec_dot: turbo3 · q8_0 (flash attention CPU path) ---------- */
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+
+void lm_ggml_vec_dot_turbo3_0_q8_0(int n, float * LM_GGML_RESTRICT s, size_t bs,
+        const void * LM_GGML_RESTRICT vx, size_t bx,
+        const void * LM_GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(n % QK_TURBO3 == 0);
+    assert(nrc == 1);
+    LM_GGML_UNUSED(nrc);
+    LM_GGML_UNUSED(bx);
+    LM_GGML_UNUSED(by);
+    LM_GGML_UNUSED(bs);
+
+    const block_turbo3_0 * LM_GGML_RESTRICT x = (const block_turbo3_0 *)vx;
+    const block_q8_0     * LM_GGML_RESTRICT y = (const block_q8_0 *)vy;
+
+    const int nb = n / QK_TURBO3;
+
+    // Load the 8 centroids as a 32-byte table for vqtbl2q_u8 byte lookup.
+    // Each centroid is a float32 (4 bytes), so 8 centroids = 32 bytes = 2 x uint8x16.
+    const float centroid_arr[8] = {
+        CENTROIDS_3BIT[0], CENTROIDS_3BIT[1], CENTROIDS_3BIT[2], CENTROIDS_3BIT[3],
+        CENTROIDS_3BIT[4], CENTROIDS_3BIT[5], CENTROIDS_3BIT[6], CENTROIDS_3BIT[7],
+    };
+    uint8x16x2_t ctbl;
+    ctbl.val[0] = vld1q_u8((const uint8_t *)&centroid_arr[0]); // centroids 0-3 as bytes
+    ctbl.val[1] = vld1q_u8((const uint8_t *)&centroid_arr[4]); // centroids 4-7 as bytes
+
+    // Byte offset pattern: to look up centroid[idx], we need bytes at idx*4+0,1,2,3.
+    // We build index vectors by computing idx*4 and adding {0,1,2,3} per lane.
+    const uint8x16_t byte_off = {0,1,2,3, 0,1,2,3, 0,1,2,3, 0,1,2,3};
+
+    const uint8x8_t mask2 = vdup_n_u8(0x03);
+
+    float32x4_t global_sum = vdupq_n_f32(0.0f);
+
+    for (int i = 0; i < nb; i++) {
+        const float turbo_norm = LM_GGML_FP16_TO_FP32(x[i].norm);
+        const float q8_scale   = LM_GGML_FP16_TO_FP32(y[i].d);
+        const float block_scale = turbo_norm * q8_scale;
+
+        float32x4_t block_sum = vdupq_n_f32(0.0f);
+
+        // Process 32 elements in 4 groups of 8.
+        // qs layout:  8 bytes, qs[j/4] has 4 x 2-bit values (bits 0-1, 2-3, 4-5, 6-7)
+        // signs layout: 4 bytes, signs[j/8] has 8 x 1-bit values
+        for (int g = 0; g < 4; g++) {
+            // --- Unpack 8 x 3-bit indices ---
+
+            // Load 2 bytes from qs (elements g*8..g*8+7, packed 4 per byte)
+            const uint8_t qs_byte0 = x[i].qs[g * 2 + 0]; // elements g*8+0..3
+            const uint8_t qs_byte1 = x[i].qs[g * 2 + 1]; // elements g*8+4..7
+
+            // Unpack 4 x 2-bit from each byte into a uint8x8 vector of 8 low2 values.
+            // byte0: bits [1:0]=elem0, [3:2]=elem1, [5:4]=elem2, [7:6]=elem3
+            // byte1: bits [1:0]=elem4, [3:2]=elem5, [5:4]=elem6, [7:6]=elem7
+            uint8x8_t low2;
+            {
+                uint8x8_t v0 = vdup_n_u8(qs_byte0);
+                uint8x8_t v1 = vdup_n_u8(qs_byte1);
+                // Use negative shifts with vshl for right shift by {0,2,4,6} per element
+                const int8x8_t neg_shifts = {0, -2, -4, -6, 0, -2, -4, -6};
+                // Select byte0 for lanes 0-3, byte1 for lanes 4-7
+                uint8x8_t merged = vext_u8(
+                    vreinterpret_u8_s8(vshl_s8(vreinterpret_s8_u8(v0), neg_shifts)),
+                    vreinterpret_u8_s8(vshl_s8(vreinterpret_s8_u8(v1), neg_shifts)),
+                    4
+                );
+                low2 = vand_u8(merged, mask2);
+            }
+
+            // Load 1 byte from signs (elements g*8..g*8+7, 1 bit each)
+            const uint8_t signs_byte = x[i].signs[g];
+
+            // Unpack 8 x 1-bit hi values
+            uint8x8_t hi1;
+            {
+                uint8x8_t sv = vdup_n_u8(signs_byte);
+                const int8x8_t neg_shifts = {0, -1, -2, -3, -4, -5, -6, -7};
+                hi1 = vand_u8(
+                    vreinterpret_u8_s8(vshl_s8(vreinterpret_s8_u8(sv), neg_shifts)),
+                    vdup_n_u8(0x01)
+                );
+            }
+
+            // Combine: idx = low2 | (hi1 << 2), range 0-7
+            uint8x8_t idx8 = vorr_u8(low2, vshl_n_u8(hi1, 2));
+
+            // --- Centroid table lookup via vqtbl2q_u8 ---
+            // Convert element index to byte offset: idx * 4
+            uint8x8_t byte_idx_base = vshl_n_u8(idx8, 2); // idx * 4
+
+            // For first 4 elements: build 16-byte lookup index
+            // Lane k (k=0..3): needs bytes at byte_idx_base[k]*1 + {0,1,2,3}
+            uint8x16_t bidx_lo, bidx_hi;
+            {
+                // Widen each of the 4 base indices to fill 4 consecutive lanes
+                // e.g., base[0],base[0],base[0],base[0], base[1],base[1],base[1],base[1], ...
+                // For elements 0-3 (lower half of idx8)
+                uint8x8_t base_lo = byte_idx_base;
+                // Duplicate each lane 4 times using zip and ext
+                uint8x8x2_t z1 = vzip_u8(base_lo, base_lo); // {b0,b0,b1,b1,b2,b2,b3,b3}, {b4,b4,b5,b5,b6,b6,b7,b7}
+                uint8x8x2_t z2_lo = vzip_u8(z1.val[0], z1.val[0]); // {b0,b0,b0,b0,b1,b1,b1,b1}, {b2,b2,b2,b2,b3,b3,b3,b3}
+                uint8x8x2_t z2_hi = vzip_u8(z1.val[1], z1.val[1]); // {b4,b4,b4,b4,b5,b5,b5,b5}, {b6,b6,b6,b6,b7,b7,b7,b7}
+
+                bidx_lo = vaddq_u8(vcombine_u8(z2_lo.val[0], z2_lo.val[1]), byte_off);
+                bidx_hi = vaddq_u8(vcombine_u8(z2_hi.val[0], z2_hi.val[1]), byte_off);
+            }
+
+            // Look up centroid bytes from table
+            uint8x16_t cbytes_lo = vqtbl2q_u8(ctbl, bidx_lo);
+            uint8x16_t cbytes_hi = vqtbl2q_u8(ctbl, bidx_hi);
+
+            // Reinterpret as float32x4
+            float32x4_t cent_lo = vreinterpretq_f32_u8(cbytes_lo); // centroids for elements 0-3
+            float32x4_t cent_hi = vreinterpretq_f32_u8(cbytes_hi); // centroids for elements 4-7
+
+            // --- Load 8 x int8 q8 values and convert to float ---
+            const int8_t * q8_ptr = y[i].qs + g * 8;
+            int8x8_t q8_s8 = vld1_s8(q8_ptr);
+            int16x8_t q8_s16 = vmovl_s8(q8_s8);
+            float32x4_t q8_f_lo = vcvtq_f32_s32(vmovl_s16(vget_low_s16(q8_s16)));
+            float32x4_t q8_f_hi = vcvtq_f32_s32(vmovl_s16(vget_high_s16(q8_s16)));
+
+            // --- Multiply-accumulate ---
+            block_sum = vfmaq_f32(block_sum, cent_lo, q8_f_lo);
+            block_sum = vfmaq_f32(block_sum, cent_hi, q8_f_hi);
+        }
+
+        // Horizontal sum of block_sum * block_scale
+        float32x4_t scaled = vmulq_n_f32(block_sum, block_scale);
+        global_sum = vaddq_f32(global_sum, scaled);
+    }
+
+    // Final horizontal reduction
+    *s = vaddvq_f32(global_sum);
+}
+
+#else /* scalar fallback for non-ARM platforms */
+
 void lm_ggml_vec_dot_turbo3_0_q8_0(int n, float * LM_GGML_RESTRICT s, size_t bs,
         const void * LM_GGML_RESTRICT vx, size_t bx,
         const void * LM_GGML_RESTRICT vy, size_t by, int nrc) {
@@ -432,3 +571,5 @@ void lm_ggml_vec_dot_turbo3_0_q8_0(int n, float * LM_GGML_RESTRICT s, size_t bs,
 
     *s = sumf;
 }
+
+#endif /* __ARM_NEON && __aarch64__ */
