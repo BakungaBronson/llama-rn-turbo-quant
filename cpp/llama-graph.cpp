@@ -2050,20 +2050,23 @@ lm_ggml_tensor * llm_graph_context::build_attn(
         const auto * mctx_check = inp->mctx;
         lm_ggml_tensor * k_check = mctx_check->get_k(ctx0, il);
         lm_ggml_tensor * v_check = mctx_check->get_v(ctx0, il);
-        // Rotate K if K cache is TurboQuant
-        if (k_check->type == LM_GGML_TYPE_TURBO3_0 || k_check->type == LM_GGML_TYPE_TURBO4_0) {
+        // turbo3: graph-side WHT rotation (quant has no internal rotation)
+        // turbo4: NO graph-side rotation (quant applies internal GS rotation)
+        if (k_check->type == LM_GGML_TYPE_TURBO3_0) {
             if (k_cur->ne[0] % 128 == 0) {
                 if (!lm_ggml_is_contiguous(k_cur)) { k_cur = lm_ggml_cont(ctx0, k_cur); }
-                k_cur = lm_ggml_turbo_wht(ctx0, k_cur, 0);  // forward rotate K
+                k_cur = lm_ggml_turbo_wht(ctx0, k_cur, 0);  // forward WHT for turbo3 only
             }
         }
-        // Rotate V only if V cache is TurboQuant (not for boundary layers using q8_0)
-        if (v_check->type == LM_GGML_TYPE_TURBO3_0 || v_check->type == LM_GGML_TYPE_TURBO4_0) {
+        // turbo4 K: no graph-side rotation (quantize_row_turbo4_0_ref does internal GS)
+
+        if (v_check->type == LM_GGML_TYPE_TURBO3_0) {
             if (v_cur->ne[0] % 128 == 0) {
                 if (!lm_ggml_is_contiguous(v_cur)) { v_cur = lm_ggml_cont(ctx0, v_cur); }
-                v_cur = lm_ggml_turbo_wht(ctx0, v_cur, 0);  // forward rotate V
+                v_cur = lm_ggml_turbo_wht(ctx0, v_cur, 0);  // forward WHT for turbo3 only
             }
         }
+        // turbo4 V: no graph-side rotation
     }
 
     // store to KV cache
@@ -2081,30 +2084,35 @@ lm_ggml_tensor * llm_graph_context::build_attn(
     lm_ggml_tensor * k = mctx_cur->get_k(ctx0, il);
     lm_ggml_tensor * v = mctx_cur->get_v(ctx0, il);
 
-    // TurboQuant rotation handling:
-    // - Flash attn path: dequant applies inverse WHT → K/V in original space → no Q rotation needed
-    // - vec_dot path: K stays in rotated space → Q MUST be rotated to match
-    const bool is_turbo = (k->type == LM_GGML_TYPE_TURBO3_0 || k->type == LM_GGML_TYPE_TURBO4_0);
+    // TurboQuant rotation:
+    // turbo3: graph-side WHT. Cache = WHT(K). vec_dot needs WHT(Q). Dequant applies WHT^-1.
+    // turbo4: quant-internal GS. Cache = GS(K). No graph-side rotation. Dequant applies GS^-1.
+    // Flash attn: both types dequant to original space → no Q rotation needed.
+    // vec_dot: turbo3 needs WHT(Q), turbo4's vec_dot handles GS internally.
+    const bool is_turbo3 = (k->type == LM_GGML_TYPE_TURBO3_0);
+    const bool is_turbo4 = (k->type == LM_GGML_TYPE_TURBO4_0);
     const bool use_flash = cparams.flash_attn && kq_b == nullptr;
 
-    if (is_turbo && !use_flash) {
-        // vec_dot path: rotate Q to match rotated K in cache
+    if (is_turbo3 && !use_flash) {
+        // turbo3 vec_dot: Q must be WHT-rotated to match WHT-rotated K in cache
         if (q->ne[0] % 128 == 0) {
             if (!lm_ggml_is_contiguous(q)) { q = lm_ggml_cont(ctx0, q); }
-            q = lm_ggml_turbo_wht(ctx0, q, 0);  // forward rotate Q
+            q = lm_ggml_turbo_wht(ctx0, q, 0);
         }
     }
+    // turbo4 vec_dot: no Q rotation (quant-internal GS handles it in vec_dot kernel)
 
     lm_ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
     cb(cur, "kqv_out", il);
 
-    if (is_turbo && !use_flash) {
-        // vec_dot path: undo V rotation on attention output
+    if (is_turbo3 && !use_flash) {
+        // turbo3 vec_dot: undo V WHT rotation on output
         if (cur->ne[0] % 128 == 0) {
             if (!lm_ggml_is_contiguous(cur)) { cur = lm_ggml_cont(ctx0, cur); }
-            cur = lm_ggml_turbo_wht(ctx0, cur, 1);  // inverse rotate output
+            cur = lm_ggml_turbo_wht(ctx0, cur, 1);
         }
     }
+    // turbo4: dequant already restores V to original space
 
     if (wo) {
         cur = build_lora_mm(wo, cur);

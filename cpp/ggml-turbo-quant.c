@@ -204,8 +204,6 @@ void dequantize_row_turbo3_0(const block_turbo3_0 * LM_GGML_RESTRICT x, float * 
     assert(k % QK_TURBO3 == 0);
     const int nb = k / QK_TURBO3;
 
-    turbo_init_rotation();
-
     for (int block = 0; block < nb; block++) {
         float grp_norm   = LM_GGML_FP16_TO_FP32(x[block].norm);
         float recon_norm = LM_GGML_FP16_TO_FP32(x[block].rnorm);
@@ -221,12 +219,36 @@ void dequantize_row_turbo3_0(const block_turbo3_0 * LM_GGML_RESTRICT x, float * 
             y[block * QK_TURBO3 + j] = CENTROIDS_3BIT[idx] * scale;
         }
 
-        /* Inverse WHT: restore from rotated space to original space.
-         * Required for flash attention which dequants K/V but does NOT
-         * apply graph-side Q rotation. turbo_rotation_t = inverse WHT. */
-        float tmp[TURBO_D];
-        matvec(turbo_rotation_t, &y[block * QK_TURBO3], tmp, TURBO_D);
-        memcpy(&y[block * QK_TURBO3], tmp, TURBO_D * sizeof(float));
+        /* Inverse WHT: restore from WHT-rotated space to original space.
+         * WHT inverse = D2 @ H @ D1 / sqrt(d), where H is butterfly Hadamard,
+         * D1/D2 are sign vectors. Inverse swaps s1↔s2 vs forward. */
+        {
+            /* Import sign vectors from ops.cpp (same tables) */
+            extern const float turbo_wht_s1[128];
+            extern const float turbo_wht_s2[128];
+            float x[TURBO_D];
+            float * src = &y[block * QK_TURBO3];
+
+            /* Inverse: first signs = s2, second signs = s1 (swapped vs forward) */
+            for (int i = 0; i < TURBO_D; i++) x[i] = src[i] * turbo_wht_s2[i];
+
+            /* WHT butterfly (7 stages) */
+            for (int h = 1; h < TURBO_D; h *= 2) {
+                for (int i = 0; i < TURBO_D; i += h * 2) {
+                    for (int j = i; j < i + h; j++) {
+                        float a = x[j], b = x[j + h];
+                        x[j]     = a + b;
+                        x[j + h] = a - b;
+                    }
+                }
+            }
+
+            /* Normalize + second signs (s1 for inverse) */
+            const float inv_sqrt_128 = 0.08838834764831845f;
+            for (int i = 0; i < TURBO_D; i++) {
+                src[i] = x[i] * inv_sqrt_128 * turbo_wht_s1[i];
+            }
+        }
     }
 }
 
