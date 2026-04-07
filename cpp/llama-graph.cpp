@@ -2081,16 +2081,30 @@ lm_ggml_tensor * llm_graph_context::build_attn(
     lm_ggml_tensor * k = mctx_cur->get_k(ctx0, il);
     lm_ggml_tensor * v = mctx_cur->get_v(ctx0, il);
 
-    // TurboQuant: dequant now applies inverse WHT (restores K/V to original space).
-    // Q is NOT rotated — flash attention works in original space.
-    // The inverse WHT on the attention output is also removed since V dequant
-    // already restores to original space.
-    // For the vec_dot path (non-flash-attn), this means Q·dequant(K) where
-    // dequant(K) = inverse_WHT(centroid_decode(K_rotated)) = K_original.
-    // Standard dot product, no rotation needed.
+    // TurboQuant rotation handling:
+    // - Flash attn path: dequant applies inverse WHT → K/V in original space → no Q rotation needed
+    // - vec_dot path: K stays in rotated space → Q MUST be rotated to match
+    const bool is_turbo = (k->type == LM_GGML_TYPE_TURBO3_0 || k->type == LM_GGML_TYPE_TURBO4_0);
+    const bool use_flash = cparams.flash_attn && kq_b == nullptr;
+
+    if (is_turbo && !use_flash) {
+        // vec_dot path: rotate Q to match rotated K in cache
+        if (q->ne[0] % 128 == 0) {
+            if (!lm_ggml_is_contiguous(q)) { q = lm_ggml_cont(ctx0, q); }
+            q = lm_ggml_turbo_wht(ctx0, q, 0);  // forward rotate Q
+        }
+    }
 
     lm_ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
     cb(cur, "kqv_out", il);
+
+    if (is_turbo && !use_flash) {
+        // vec_dot path: undo V rotation on attention output
+        if (cur->ne[0] % 128 == 0) {
+            if (!lm_ggml_is_contiguous(cur)) { cur = lm_ggml_cont(ctx0, cur); }
+            cur = lm_ggml_turbo_wht(ctx0, cur, 1);  // inverse rotate output
+        }
+    }
 
     if (wo) {
         cur = build_lora_mm(wo, cur);
