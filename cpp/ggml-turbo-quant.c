@@ -204,12 +204,13 @@ void dequantize_row_turbo3_0(const block_turbo3_0 * LM_GGML_RESTRICT x, float * 
     assert(k % QK_TURBO3 == 0);
     const int nb = k / QK_TURBO3;
 
+    turbo_init_rotation();
+
     for (int block = 0; block < nb; block++) {
         float grp_norm   = LM_GGML_FP16_TO_FP32(x[block].norm);
         float recon_norm = LM_GGML_FP16_TO_FP32(x[block].rnorm);
 
-        /* Norm correction: scale = grp_norm / recon_norm
-         * This rescales the reconstructed vector to match the original vector's norm. */
+        /* Norm correction: scale = grp_norm / recon_norm */
         float scale = (recon_norm > 1e-10f) ? (grp_norm / recon_norm) : 0.0f;
 
         for (int j = 0; j < QK_TURBO3; j++) {
@@ -219,6 +220,13 @@ void dequantize_row_turbo3_0(const block_turbo3_0 * LM_GGML_RESTRICT x, float * 
 
             y[block * QK_TURBO3 + j] = CENTROIDS_3BIT[idx] * scale;
         }
+
+        /* Inverse WHT: restore from rotated space to original space.
+         * Required for flash attention which dequants K/V but does NOT
+         * apply graph-side Q rotation. turbo_rotation_t = inverse WHT. */
+        float tmp[TURBO_D];
+        matvec(turbo_rotation_t, &y[block * QK_TURBO3], tmp, TURBO_D);
+        memcpy(&y[block * QK_TURBO3], tmp, TURBO_D * sizeof(float));
     }
 }
 
