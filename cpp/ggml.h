@@ -428,9 +428,10 @@ extern "C" {
         // LM_GGML_TYPE_IQ4_NL_8_8 = 38,
         LM_GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
         LM_GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
-        LM_GGML_TYPE_TURBO3_0 = 41, // TurboQuant 3-bit KV cache (arXiv 2504.19874)
-        LM_GGML_TYPE_TURBO4_0 = 42, // TurboQuant 4-bit KV cache
-        LM_GGML_TYPE_COUNT   = 43,
+        LM_GGML_TYPE_Q1_0    = 41,
+        LM_GGML_TYPE_TURBO3_0 = 42, // TurboQuant 3-bit KV cache (arXiv 2504.19874)
+        LM_GGML_TYPE_TURBO4_0 = 43, // TurboQuant 4-bit KV cache
+        LM_GGML_TYPE_COUNT   = 44,
     };
 
     // precision
@@ -467,6 +468,7 @@ extern "C" {
         LM_GGML_FTYPE_MOSTLY_BF16    = 24, // except 1d tensors
         LM_GGML_FTYPE_MOSTLY_MXFP4   = 25, // except 1d tensors
         LM_GGML_FTYPE_MOSTLY_NVFP4   = 26, // except 1d tensors
+        LM_GGML_FTYPE_MOSTLY_Q1_0    = 27, // except 1d tensors
     };
 
     // available tensor operations:
@@ -904,15 +906,17 @@ extern "C" {
             struct lm_ggml_tensor  * b,
             struct lm_ggml_tensor  * ids);
 
-    LM_GGML_API struct lm_ggml_tensor * lm_ggml_add1(
+    LM_GGML_DEPRECATED(LM_GGML_API struct lm_ggml_tensor * lm_ggml_add1(
             struct lm_ggml_context * ctx,
             struct lm_ggml_tensor  * a,
-            struct lm_ggml_tensor  * b);
+            struct lm_ggml_tensor  * b),
+        "use lm_ggml_add instead");
 
-    LM_GGML_API struct lm_ggml_tensor * lm_ggml_add1_inplace(
+    LM_GGML_DEPRECATED(LM_GGML_API struct lm_ggml_tensor * lm_ggml_add1_inplace(
             struct lm_ggml_context * ctx,
             struct lm_ggml_tensor  * a,
-            struct lm_ggml_tensor  * b);
+            struct lm_ggml_tensor  * b),
+        "use lm_ggml_add_inplace instead");
 
     // dst = a
     // view(dst, nb1, nb2, nb3, offset) += b

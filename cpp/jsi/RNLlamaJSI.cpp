@@ -529,14 +529,6 @@ namespace rnllama_jsi {
                              throw std::runtime_error("Embedding is not supported in encoder-decoder models");
                          }
 
-                         if (!ctx->params.lora_adapters.empty()) {
-                             int lora_result = ctx->applyLoraAdapters(ctx->params.lora_adapters);
-                             if (lora_result != 0) {
-                                 delete ctx;
-                                 throw std::runtime_error("Failed to apply lora adapters");
-                             }
-                         }
-
                          std::vector<std::string> usedDevices;
                          bool gpuEnabled = false;
                          if (ctx->llama_init->model() != nullptr) {
@@ -983,6 +975,7 @@ namespace rnllama_jsi {
                 if (ctx->completion && ctx->completion->is_predicting) {
                      throw std::runtime_error("Context is busy");
                 }
+                ctx->completion->rewind();
 
                 parseCompletionParams(runtime, params, ctx);
 
@@ -1027,7 +1020,6 @@ namespace rnllama_jsi {
                         ctx->tts_wrapper->setGuideTokens(guide_tokens);
                     }
 
-                    ctx->completion->rewind();
                     if (!ctx->completion->initSampling()) {
                         throw std::runtime_error("Failed to initialize sampling");
                     }
@@ -1821,8 +1813,7 @@ namespace rnllama_jsi {
                     if (ctx->completion && ctx->completion->is_predicting) {
                          throw std::runtime_error("Context is busy");
                     }
-                    int result = ctx->applyLoraAdapters(lora_adapters);
-                    if (result != 0) throw std::runtime_error("Failed to apply lora adapters");
+                    ctx->applyLoraAdapters(lora_adapters);
                     return [](jsi::Runtime& rt) { return jsi::Value::undefined(); };
                 }, contextId);
             }
